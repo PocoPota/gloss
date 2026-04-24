@@ -2,100 +2,121 @@
 
 > PDFの選択箇所を、その場で日本語に。
 
-論文を読みながら「この段落だけ訳を見たい」という時のためのローカル翻訳ビューア。PDFをブラウザで開き、本文をマウスで選択するだけで右ペインに翻訳が表示されます。読んだ箇所だけを訳すので API コストが低く、原文とも常に見比べられます。
+論文を読みながら「この段落だけ訳を見たい」という時のためのブラウザ内翻訳ビューア。
+PDFを開き、本文をマウスで選択するだけで右ペインに翻訳が現れます。
+
+**バックエンドはありません。** 選択したテキストは、あなたのブラウザから直接 翻訳APIプロバイダ (Anthropic / Google AI / DeepL) に送られます。APIキーは中継サーバを経由せず、このデバイスに留まります。
 
 ## 特徴
 
-- **選択翻訳** — 読みたい箇所だけ。全文翻訳と比べて API リクエストは1桁少ない
-- **原文そのまま** — PDF.js で忠実にレンダリング、翻訳は右パネルに履歴として積む
-- **ローカルキャッシュ** — 一度引いた訳文は `localStorage` に保存、同じ選択は即表示
-- **APIキーは OS キーチェーンに** — 平文でディスクに残さない
-- **エンジン切替** — Claude / Gemini / DeepL / echo (テスト用)
+- **選択翻訳** — 読みたい所だけを訳す。全文翻訳よりAPIコストが1桁少ない
+- **原文そのまま** — PDF.js で忠実にレンダリング、翻訳は右に履歴として積む
+- **サーバレス / 静的** — CDN に置くだけでデプロイ完了
+- **APIキーは手元だけ** — サーバに送信されず、保存もオプトイン式
+- **エンジン切替** — Claude / Gemini / DeepL (+ 動作確認用 echo)
 
-## クイックスタート
+## クイックスタート (ローカル)
+
+Python標準の簡易サーバで十分:
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -e ".[dev]"
-uvicorn gloss.web:app --reload
+python3 -m http.server 8000
+# → http://localhost:8000
 ```
 
-ブラウザで <http://localhost:8000> を開き、ヘッダー右の ⚙ から使いたいエンジンの API キーを設定します。
+または Node:
+
+```bash
+npx serve
+```
+
+`file://` で直接開くとESモジュールが動きません。必ずHTTPサーバ経由で開いてください。
 
 ## 使い方
 
-1. **PDF を開く** — ヘッダーの「PDFを開く」、または画面中央にドラッグ＆ドロップ
-2. **本文を選択** — マウスでドラッグ（複数行・改行跨ぎOK）
-3. **翻訳が右に現れる** — マウスを離した 120ms 後に自動翻訳、履歴に追加
-4. **<kbd>Esc</kbd> で中断** — 誤選択のときは即座に取消
+1. **PDFを開く** — ボタン、またはドロップ
+2. **ヘッダー右の ⚙ からAPIキーを設定**
+3. **本文を選択** — マウスドラッグで範囲を選ぶ
+4. **翻訳が右に現れる** — 選択を離すと120ms後に自動で翻訳
+5. **<kbd>Esc</kbd> で中断**
 
-選択テキストは送信前に正規化されます（行末ハイフネーションの修復、改行の折り畳み、`[12]` / URL / `Fig. 3` 等の保護）。
+## APIキーの管理
 
-## API キー
+設定モーダル (⚙) から:
 
-### UI から（推奨）
+- **入力して「保存」** — メモリに入り、すぐ使える
+- **"このブラウザにキーを保存する" チェックボックス**
+  - **OFF (既定)**: タブを閉じる / リロードするとキーは消える
+  - **ON**: ブラウザの `localStorage` に残る。次回起動時にも使える
+- **エンジンごとに削除** — 個別の「削除」ボタン
+- **全キー削除** — モーダル下部のボタン
 
-ヘッダーの ⚙ を開き、使いたいエンジンの欄にキーを貼って「保存」。**OS キーチェーン**（macOS Keychain / Windows Credential Manager / Linux Secret Service）に保存されます。
+キーはこのドメインの JS からしかアクセスできません (Same-Origin Policy)。サーバには一切送信されず、各プロバイダにのみ直接送られます。
 
-| エンジン | 取得先 |
+| プロバイダ | APIキー取得先 |
 |---|---|
 | Claude | <https://console.anthropic.com/settings/keys> |
 | Gemini | <https://aistudio.google.com/app/apikey> |
 | DeepL  | <https://www.deepl.com/account/summary> |
 
-### 環境変数（CI / デプロイ向け）
+## デプロイ (無料)
 
-`ANTHROPIC_API_KEY` / `GEMINI_API_KEY` / `DEEPL_API_KEY` を設定するとキーチェーンより優先されます。
+静的ファイルだけなので、ほぼ何でも載ります。推奨:
 
-## 設定（環境変数・任意）
+### Cloudflare Pages
 
-| 変数 | 用途 | 既定 |
-|---|---|---|
-| `GLOSS_ENGINE` | 起動時のデフォルトエンジン | `echo` |
-| `GLOSS_CLAUDE_MODEL` | Claude モデル | `claude-sonnet-4-6` |
-| `GLOSS_GEMINI_MODEL` | Gemini モデル | `gemini-2.5-flash` |
-| `GLOSS_{CLAUDE,GEMINI}_RPM` | 分あたりリクエスト制限 (0 で無制限) | `0` / `10` |
-| `GLOSS_{CLAUDE,GEMINI}_MAX_WORKERS` | 並列度 | `4` / `2` |
-| `GLOSS_MAX_WORKERS` / `GLOSS_RPM` | 上2つの共通フォールバック | — |
-| `GLOSS_LOG_LEVEL` | ログレベル | `INFO` |
+1. リポジトリを GitHub にプッシュ
+2. Cloudflare Dashboard → Pages → **Connect to Git**
+3. Build settings:
+   - **Build command**: (空欄)
+   - **Build output directory**: `/` (root)
+4. Deploy
 
-## API
+`_headers` ファイルが自動で読まれ、CSP 等のセキュリティヘッダが適用されます。
 
-- `GET /` — フロントエンド
-- `GET /api/engines` — エンジン一覧と利用可否
-- `POST /api/translate-text` — 単発翻訳 `{text, engine}` → `{translated, elapsed_ms, ...}`
-- `GET /api/config` — キー設定状態（キー本体は返しません）
-- `PUT /api/config/{engine}` — キーチェーンに保存
-- `DELETE /api/config/{engine}` — キーチェーンから削除
-
-## アーキテクチャ
-
-```
-src/gloss/
-├── web.py            # FastAPI エンドポイント
-├── config.py         # OS キーチェーンによるキー管理
-├── protect.py        # 引用・URL・図表番号を ⟦N⟧ 化して保護／復元
-├── translate/
-│   ├── base.py       # Translator Protocol
-│   ├── echo.py       # テスト用（[JA] プレフィックス）
-│   ├── claude.py     # Anthropic
-│   ├── gemini.py     # Google AI
-│   ├── deepl.py      # DeepL
-│   ├── factory.py    # 名前/環境変数から translator を生成
-│   └── _ratelimit.py # スレッドセーフな RPM 制御
-└── static/           # PDF.js + 最小フロントエンド
-    ├── index.html
-    ├── app.js
-    └── style.css
-```
-
-## 開発
+### Vercel
 
 ```bash
-pip install -e ".[dev]"
-pytest                # 16 テスト
-ruff check .
+npx vercel
+```
+
+(付属の `vercel.json` で CSP ヘッダが自動設定されます)
+
+### Netlify
+
+リポジトリ直結、または:
+
+```bash
+npx netlify deploy --prod --dir=.
+```
+
+`_headers` が自動で読まれます。
+
+### その他
+
+- GitHub Pages: `.github/workflows/pages.yml` でルートをそのまま publish (CSP は `<meta>` で代替)
+- 静的ファイルサーバならどこでも動きます
+
+## セキュリティ方針
+
+- **CSP**: `script-src` を自サイト + jsdelivr (PDF.js) のみ、`connect-src` を 3プロバイダのAPIドメインのみに制限
+- **innerHTML 禁止**: DOM操作は全て `textContent` / `createElement`、ユーザ入力を HTML としてパースしない
+- **Referrer-Policy: strict-origin-when-cross-origin** — 外部サイトに余計なパスを渡さない
+- **Permissions-Policy**: 不要な Browser API (カメラ / マイク / 位置情報) を無効化
+- **HTTPS必須**: 上記ホスティングはすべてデフォルトHTTPS
+- **APIキーは opt-in 保存**: デフォルトはメモリのみ (タブ閉じで消える)
+
+## ファイル構成
+
+```
+gloss/
+├── index.html      # 単一のHTMLエントリ
+├── style.css
+├── app.js          # PDF描画、選択検出、キー管理、UIロジック
+├── translate.js    # Claude / Gemini / DeepL / echo のブラウザ直叩き実装
+├── protect.js      # 引用・URL・図表番号を ⟦N⟧ 化→復元
+├── _headers        # Cloudflare Pages / Netlify のCSP
+└── vercel.json     # Vercel 用CSP
 ```
 
 ## ライセンス

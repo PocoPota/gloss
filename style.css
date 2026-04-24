@@ -492,25 +492,73 @@ main {
 }
 .modal-help {
   margin: 0;
-  padding: 0.85rem 1.25rem 0;
-  font-size: 0.82rem;
+  padding: 0.6rem 0 0;
+  font-size: 0.8rem;
   color: var(--muted);
-  line-height: 1.6;
+  line-height: 1.65;
 }
+.modal-help code {
+  font-family: var(--mono);
+  font-size: 0.85em;
+  background: var(--bg-app);
+  padding: 0.05rem 0.3rem;
+  border-radius: 3px;
+  border: 1px solid var(--rule-soft);
+}
+
+.modal-section {
+  padding: 0.85rem 1.25rem 0.75rem;
+  border-bottom: 1px solid var(--rule-soft);
+}
+.switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+  user-select: none;
+}
+.switch input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.switch span {
+  font-size: 0.9rem;
+  color: var(--ink);
+}
+
 .settings-form {
-  padding: 0.5rem 1.25rem 1.25rem;
+  padding: 0.85rem 1.25rem 1.25rem;
   display: flex;
   flex-direction: column;
-  gap: 1.1rem;
+  gap: 0.9rem;
+}
+.settings-form:empty {
+  display: none;
 }
 .modal-foot {
   padding: 0.75rem 1.25rem;
   border-top: 1px solid var(--rule-soft);
   min-height: 2.2em;
   font-size: 0.8rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.75rem;
 }
 .modal-foot .ok  { color: var(--ok); }
 .modal-foot .err { color: var(--err); }
+.modal-foot button.ghost.danger {
+  color: var(--err);
+  border-color: var(--rule);
+  padding: 0.3rem 0.7rem;
+  font-size: 0.78rem;
+}
+.modal-foot button.ghost.danger:hover {
+  border-color: var(--err);
+  background: #fbe6e6;
+}
 
 /* Per-engine settings row */
 .setting {
