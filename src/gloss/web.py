@@ -1,12 +1,12 @@
-"""FastAPI web app for pdf-translater.
+"""FastAPI web app for gloss.
 
 Endpoints:
-    GET  /                     serve the frontend (PDF viewer)
-    GET  /api/engines          list available translator engines
-    POST /api/translate-text   translate a single text snippet → JSON
-
-The app is now a PDF viewer: the user uploads a PDF, selects text with the
-mouse, and the selection is translated on demand.
+    GET    /                     serve the frontend (PDF viewer)
+    GET    /api/engines          list available translator engines
+    POST   /api/translate-text   translate a single text snippet → JSON
+    GET    /api/config           list configured API keys (no values returned)
+    PUT    /api/config/{engine}  save API key for engine to OS keychain
+    DELETE /api/config/{engine}  remove API key from OS keychain
 """
 
 from __future__ import annotations
@@ -16,17 +16,15 @@ import os
 import time
 from pathlib import Path
 
-from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from . import config as cfg
 from .protect import protect
 from .translate.base import TranslationRequest
 from .translate.factory import KNOWN_ENGINES, build_translator
-
-load_dotenv()
 
 logging.basicConfig(
     level=os.environ.get("GLOSS_LOG_LEVEL", "INFO").upper(),
@@ -35,7 +33,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("gloss.web")
 
-app = FastAPI(title="pdf-translater", version="0.2.0")
+app = FastAPI(title="gloss", version="0.3.0")
 
 _STATIC_DIR = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="static")
@@ -50,21 +48,51 @@ def index() -> FileResponse:
 def list_engines() -> JSONResponse:
     available: list[dict[str, object]] = []
     for name in KNOWN_ENGINES:
-        ready = True
-        reason: str | None = None
-        if name == "claude" and not os.environ.get("ANTHROPIC_API_KEY"):
-            ready = False
-            reason = "ANTHROPIC_API_KEY not set"
-        elif name == "gemini" and not (
-            os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
-        ):
-            ready = False
-            reason = "GEMINI_API_KEY not set"
-        elif name == "deepl" and not os.environ.get("DEEPL_API_KEY"):
-            ready = False
-            reason = "DEEPL_API_KEY not set"
+        if name == "echo":
+            available.append({"name": name, "ready": True, "reason": None})
+            continue
+        st = cfg.key_status(name)
+        ready = bool(st.get("configured"))
+        reason = None if ready else f"APIキー未設定 ({st.get('env_var', '')})"
         available.append({"name": name, "ready": ready, "reason": reason})
     return JSONResponse({"engines": available, "default": os.environ.get("GLOSS_ENGINE", "echo")})
+
+
+@app.get("/api/config")
+def get_config() -> JSONResponse:
+    """Return which engines have an API key configured and where (never the key itself)."""
+    engines = [cfg.key_status(e) for e in cfg.ENGINE_SPECS]
+    return JSONResponse({"engines": engines})
+
+
+class ConfigBody(BaseModel):
+    api_key: str = Field(..., min_length=1, max_length=500)
+
+
+@app.put("/api/config/{engine}")
+def put_config(engine: str, body: ConfigBody) -> JSONResponse:
+    if engine not in cfg.ENGINE_SPECS:
+        raise HTTPException(404, f"unknown engine: {engine}")
+    spec = cfg.ENGINE_SPECS[engine]
+    if os.environ.get(spec.env_var):
+        # Env var takes precedence; warn the client so the UI can explain.
+        raise HTTPException(
+            409,
+            f"{spec.env_var} が環境変数として設定されているため、キーチェーン保存は無効になります。環境変数を外してから保存してください。",
+        )
+    try:
+        cfg.set_api_key(engine, body.api_key)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    return JSONResponse(cfg.key_status(engine))
+
+
+@app.delete("/api/config/{engine}")
+def delete_config(engine: str) -> JSONResponse:
+    if engine not in cfg.ENGINE_SPECS:
+        raise HTTPException(404, f"unknown engine: {engine}")
+    removed = cfg.delete_api_key(engine)
+    return JSONResponse({"engine": engine, "removed": removed, **cfg.key_status(engine)})
 
 
 class TranslateTextBody(BaseModel):

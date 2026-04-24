@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import logging
-import os
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from anthropic import Anthropic
 from tenacity import retry, stop_after_attempt, wait_exponential_jitter
 
+from ..config import get_api_key
 from ._ratelimit import RateLimiter
 from .base import ItemCallback, TranslationRequest
 
@@ -39,7 +39,10 @@ class ClaudeTranslator:
         rpm: int | float | None = 0,
     ):
         self.model = model
-        self.client = Anthropic(api_key=api_key or os.environ.get("ANTHROPIC_API_KEY"))
+        key = api_key or get_api_key("claude")
+        if not key:
+            raise ValueError("Claude API key not configured (set via Settings UI or ANTHROPIC_API_KEY env var)")
+        self.client = Anthropic(api_key=key)
         self.max_workers = max(1, int(max_workers))
         self._limiter = RateLimiter(rpm)
 

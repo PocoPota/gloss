@@ -1,4 +1,4 @@
-// pdf-translater frontend: PDF.js viewer + on-selection translation.
+// gloss frontend: PDF.js viewer + on-selection translation.
 
 import * as pdfjsLib from "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.min.mjs";
 
@@ -18,6 +18,11 @@ const currentEl = $("current");
 const historyEl = $("history");
 const cacheStat = $("cache-stat");
 const clearHistoryBtn = $("clear-history");
+const openSettingsBtn = $("open-settings");
+const settingsBackdrop = $("settings-backdrop");
+const closeSettingsBtn = $("close-settings");
+const settingsForm = $("settings-form");
+const settingsStatus = $("settings-status");
 
 // ---------- State ----------
 let currentPdf = null;            // pdfjs document proxy
@@ -397,6 +402,154 @@ clearHistoryBtn.addEventListener("click", () => {
   updateCacheStat();
   setCurrent("", false);
 });
+
+// ---------- Settings modal ----------
+openSettingsBtn.addEventListener("click", () => openSettings());
+closeSettingsBtn.addEventListener("click", closeSettings);
+settingsBackdrop.addEventListener("click", (ev) => {
+  if (ev.target === settingsBackdrop) closeSettings();
+});
+document.addEventListener("keydown", (ev) => {
+  if (ev.key === "Escape" && !settingsBackdrop.hidden) {
+    closeSettings();
+    ev.stopImmediatePropagation();
+  }
+});
+
+async function openSettings() {
+  settingsBackdrop.hidden = false;
+  setSettingsStatus("");
+  await renderSettings();
+}
+function closeSettings() {
+  settingsBackdrop.hidden = true;
+}
+function setSettingsStatus(msg, cls = "") {
+  settingsStatus.textContent = msg;
+  settingsStatus.className = "muted " + cls;
+}
+
+async function renderSettings() {
+  settingsForm.innerHTML = "<div class='muted'>読み込み中…</div>";
+  try {
+    const res = await fetch("/api/config");
+    const data = await res.json();
+    settingsForm.innerHTML = "";
+    for (const eng of data.engines) {
+      settingsForm.appendChild(renderEngineRow(eng));
+    }
+  } catch (err) {
+    settingsForm.innerHTML = `<div class='err-msg'>設定の読み込みに失敗しました: ${err.message}</div>`;
+  }
+}
+
+function renderEngineRow(eng) {
+  const wrap = document.createElement("div");
+  wrap.className = "setting";
+
+  const head = document.createElement("div");
+  head.className = "setting-head";
+  const title = document.createElement("div");
+  title.className = "setting-title";
+  title.textContent = eng.label;
+  head.appendChild(title);
+
+  const status = document.createElement("span");
+  status.className = "setting-status " + (eng.configured ? "ok" : "off");
+  status.textContent = eng.configured
+    ? (eng.source === "env" ? "環境変数で設定済み" : "キーチェーンに保存済み")
+    : "未設定";
+  head.appendChild(status);
+  wrap.appendChild(head);
+
+  const row = document.createElement("div");
+  row.className = "setting-row";
+  const input = document.createElement("input");
+  input.type = "password";
+  input.placeholder = eng.configured && eng.source === "keychain"
+    ? "新しいキーで上書き…"
+    : `${eng.env_var} を入力`;
+  input.autocomplete = "off";
+  input.spellcheck = false;
+  input.addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter") { ev.preventDefault(); saveKey(eng.engine, input.value); }
+  });
+  row.appendChild(input);
+
+  const save = document.createElement("button");
+  save.type = "button";
+  save.className = "primary";
+  save.textContent = "保存";
+  save.addEventListener("click", () => saveKey(eng.engine, input.value));
+  row.appendChild(save);
+
+  if (eng.configured && eng.source === "keychain") {
+    const del = document.createElement("button");
+    del.type = "button";
+    del.className = "ghost danger";
+    del.textContent = "削除";
+    del.addEventListener("click", () => deleteKey(eng.engine));
+    row.appendChild(del);
+  }
+  wrap.appendChild(row);
+
+  if (eng.source === "env") {
+    const note = document.createElement("p");
+    note.className = "setting-note";
+    note.textContent = `環境変数 ${eng.env_var} が設定されています。キーチェーンより優先されます。`;
+    wrap.appendChild(note);
+  }
+
+  if (eng.help_url) {
+    const link = document.createElement("a");
+    link.href = eng.help_url;
+    link.target = "_blank";
+    link.rel = "noopener";
+    link.className = "setting-link";
+    link.textContent = "APIキーを取得 →";
+    wrap.appendChild(link);
+  }
+  return wrap;
+}
+
+async function saveKey(engine, key) {
+  key = (key || "").trim();
+  if (!key) {
+    setSettingsStatus(`${engine}: キーを入力してください`, "err");
+    return;
+  }
+  setSettingsStatus(`${engine}: 保存中…`);
+  try {
+    const res = await fetch(`/api/config/${encodeURIComponent(engine)}`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ api_key: key }),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.detail || `${res.status}`);
+    }
+    setSettingsStatus(`${engine}: 保存しました`, "ok");
+    await renderSettings();
+    await loadEngines();
+  } catch (err) {
+    setSettingsStatus(`${engine}: ${err.message}`, "err");
+  }
+}
+
+async function deleteKey(engine) {
+  if (!confirm(`${engine} のAPIキーをキーチェーンから削除しますか？`)) return;
+  setSettingsStatus(`${engine}: 削除中…`);
+  try {
+    const res = await fetch(`/api/config/${encodeURIComponent(engine)}`, { method: "DELETE" });
+    if (!res.ok) throw new Error(`${res.status}`);
+    setSettingsStatus(`${engine}: 削除しました`, "ok");
+    await renderSettings();
+    await loadEngines();
+  } catch (err) {
+    setSettingsStatus(`${engine}: ${err.message}`, "err");
+  }
+}
 
 // ---------- Init ----------
 loadCache();

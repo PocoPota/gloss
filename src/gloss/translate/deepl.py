@@ -7,11 +7,10 @@ Note: DeepL is generally good at preserving non-Latin tokens verbatim, but
 
 from __future__ import annotations
 
-import os
-
 import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential_jitter
 
+from ..config import get_api_key
 from .base import ItemCallback, TranslationRequest
 
 
@@ -19,9 +18,9 @@ class DeepLTranslator:
     name = "deepl"
 
     def __init__(self, api_key: str | None = None):
-        self.api_key = api_key or os.environ.get("DEEPL_API_KEY") or ""
+        self.api_key = api_key or get_api_key("deepl") or ""
         if not self.api_key:
-            raise ValueError("DEEPL_API_KEY is not set")
+            raise ValueError("DeepL API key not configured (set via Settings UI or DEEPL_API_KEY env var)")
         # Keys ending in ":fx" indicate the free tier.
         self.endpoint = (
             "https://api-free.deepl.com/v2/translate"

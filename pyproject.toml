@@ -6,16 +6,14 @@ readme = "README.md"
 requires-python = ">=3.11"
 authors = [{ name = "pocopota" }]
 dependencies = [
-    "pymupdf>=1.24.0",
     "anthropic>=0.40.0",
     "google-genai>=0.3.0",
     "pydantic>=2.0",
-    "python-dotenv>=1.0",
     "httpx>=0.27",
     "tenacity>=9.0",
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
-    "python-multipart>=0.0.9",
+    "keyring>=24.0",
 ]
 
 [project.optional-dependencies]

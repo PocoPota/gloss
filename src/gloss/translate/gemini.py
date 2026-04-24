@@ -11,6 +11,7 @@ from google import genai
 from google.genai import types as genai_types
 from tenacity import retry, stop_after_attempt, wait_exponential_jitter
 
+from ..config import get_api_key
 from ._ratelimit import RateLimiter
 from .base import ItemCallback, TranslationRequest
 
@@ -40,9 +41,9 @@ class GeminiTranslator:
         rpm: int | float | None = 10,
     ):
         self.model = model
-        key = api_key or os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+        key = api_key or get_api_key("gemini") or os.environ.get("GOOGLE_API_KEY")
         if not key:
-            raise ValueError("GEMINI_API_KEY (or GOOGLE_API_KEY) is not set")
+            raise ValueError("Gemini API key not configured (set via Settings UI or GEMINI_API_KEY env var)")
         self.client = genai.Client(api_key=key)
         self.max_workers = max(1, int(max_workers))
         self._limiter = RateLimiter(rpm)
