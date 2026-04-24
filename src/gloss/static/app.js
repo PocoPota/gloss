@@ -34,38 +34,21 @@ let currentLoadingEntry = null;   // <li> of the in-progress history card
 const translationCache = new Map(); // key = `${engine}\0${text}` → translated
 
 // ---------- Local persistence keys ----------
-const CACHE_KEY = "gloss:cache:v1";
+// Translation cache is SESSION-ONLY: it lives in memory and is wiped on
+// reload / tab close / browser quit. We do persist the user's engine
+// preference though.
 const ENGINE_PREF_KEY = "gloss:engine:v1";
-const CACHE_MAX = 500;
 
-function loadCache() {
-  try {
-    const raw = localStorage.getItem(CACHE_KEY);
-    if (!raw) return;
-    const obj = JSON.parse(raw);
-    for (const [k, v] of Object.entries(obj)) translationCache.set(k, v);
-  } catch (e) {
-    console.warn("cache load failed", e);
-  }
-  updateCacheStat();
-}
-
-function saveCache() {
-  // Trim to CACHE_MAX most recent entries (insertion order).
-  const entries = Array.from(translationCache.entries());
-  const trimmed = entries.slice(-CACHE_MAX);
-  const obj = Object.fromEntries(trimmed);
-  try {
-    localStorage.setItem(CACHE_KEY, JSON.stringify(obj));
-  } catch (e) {
-    console.warn("cache save failed", e);
-  }
-}
+// One-time cleanup: remove caches persisted by older builds.
+try { localStorage.removeItem("gloss:cache:v1"); } catch { /* noop */ }
+try { localStorage.removeItem("pdft:cache:v1"); } catch { /* noop */ }
 
 function cacheKey(engine, text) { return `${engine}\0${text}`; }
 
 function updateCacheStat() {
-  cacheStat.textContent = `キャッシュ ${translationCache.size}件`;
+  cacheStat.textContent = translationCache.size
+    ? `このセッション ${translationCache.size}件`
+    : "";
 }
 
 // ---------- Engines ----------
@@ -307,10 +290,9 @@ async function translateAndRecord(text, engine, id) {
     if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
     const data = await res.json();
     if (id !== selectionSeq) {
-      // A newer selection superseded this one — still cache the result.
+      // A newer selection superseded this one — still cache the result in memory.
       translationCache.set(key, data.translated);
       updateCacheStat();
-      saveCache();
       removeHistoryEntry(entry);
       return;
     }
@@ -321,7 +303,6 @@ async function translateAndRecord(text, engine, id) {
     });
     translationCache.set(key, data.translated);
     updateCacheStat();
-    saveCache();
   } catch (err) {
     if (err.name === "AbortError") {
       // User pressed Esc or a newer selection aborted us — card already removed.
@@ -405,10 +386,10 @@ function removeHistoryEntry(li) {
 
 // ---------- Clear history ----------
 clearHistoryBtn.addEventListener("click", () => {
-  if (!confirm("履歴とキャッシュをクリアします。よろしいですか？")) return;
+  if (!historyEl.children.length && translationCache.size === 0) return;
+  if (!confirm("履歴をクリアします。よろしいですか？")) return;
   historyEl.innerHTML = "";
   translationCache.clear();
-  localStorage.removeItem(CACHE_KEY);
   updateCacheStat();
   setCurrent("", false);
 });
@@ -562,5 +543,5 @@ async function deleteKey(engine) {
 }
 
 // ---------- Init ----------
-loadCache();
+updateCacheStat();
 loadEngines();
