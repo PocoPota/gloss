@@ -55,7 +55,18 @@ def list_engines() -> JSONResponse:
         ready = bool(st.get("configured"))
         reason = None if ready else f"APIキー未設定 ({st.get('env_var', '')})"
         available.append({"name": name, "ready": ready, "reason": reason})
-    return JSONResponse({"engines": available, "default": os.environ.get("GLOSS_ENGINE", "echo")})
+
+    # Default-engine resolution:
+    #   1. GLOSS_ENGINE env var (explicit override)
+    #   2. First non-echo engine with a configured key
+    #   3. echo
+    default = os.environ.get("GLOSS_ENGINE")
+    if not default:
+        default = next(
+            (e["name"] for e in available if e["name"] != "echo" and e["ready"]),
+            "echo",
+        )
+    return JSONResponse({"engines": available, "default": default})
 
 
 @app.get("/api/config")

@@ -33,8 +33,9 @@ let currentAborter = null;        // AbortController for the currently-active fe
 let currentLoadingEntry = null;   // <li> of the in-progress history card
 const translationCache = new Map(); // key = `${engine}\0${text}` → translated
 
-// ---------- Cache persistence ----------
-const CACHE_KEY = "pdft:cache:v1";
+// ---------- Local persistence keys ----------
+const CACHE_KEY = "gloss:cache:v1";
+const ENGINE_PREF_KEY = "gloss:engine:v1";
 const CACHE_MAX = 500;
 
 function loadCache() {
@@ -78,9 +79,17 @@ async function loadEngines() {
       opt.value = e.name;
       opt.textContent = e.ready ? e.name : `${e.name} (未設定: ${e.reason})`;
       opt.disabled = !e.ready && e.name !== "echo";
-      if (e.name === data.default) opt.selected = true;
       engineSel.appendChild(opt);
     }
+    // Prefer the user's last choice if still usable; otherwise fall back to
+    // the server-computed default (first configured engine → echo).
+    const saved = localStorage.getItem(ENGINE_PREF_KEY);
+    const usable = (name) => {
+      const e = data.engines.find((x) => x.name === name);
+      return e && (e.ready || e.name === "echo");
+    };
+    const pick = (saved && usable(saved)) ? saved : data.default;
+    engineSel.value = pick;
     currentEngine = engineSel.value;
   } catch (err) {
     console.error(err);
@@ -89,6 +98,7 @@ async function loadEngines() {
 
 engineSel.addEventListener("change", () => {
   currentEngine = engineSel.value;
+  localStorage.setItem(ENGINE_PREF_KEY, currentEngine);
 });
 
 // ---------- File input / drop ----------

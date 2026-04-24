@@ -21,6 +21,34 @@ def test_list_engines():
     assert {"echo", "claude", "gemini", "deepl"}.issubset(names)
     echo = next(e for e in data["engines"] if e["name"] == "echo")
     assert echo["ready"] is True
+    # default must be a known engine name
+    assert data["default"] in names
+
+
+def test_list_engines_default_prefers_configured(monkeypatch):
+    # Pretend Claude has a key via env var → default should become "claude".
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key-not-real")
+    monkeypatch.delenv("GLOSS_ENGINE", raising=False)
+    r = client.get("/api/engines")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["default"] == "claude"
+
+
+def test_list_engines_default_falls_back_to_echo(monkeypatch):
+    # No keys, no explicit GLOSS_ENGINE → default must be "echo".
+    for v in ("ANTHROPIC_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY", "DEEPL_API_KEY", "GLOSS_ENGINE"):
+        monkeypatch.delenv(v, raising=False)
+    # Note: a key set in the OS keychain would still make an engine ready.
+    # This test asserts the env-only path picks echo when nothing is set.
+    r = client.get("/api/engines")
+    assert r.status_code == 200
+    data = r.json()
+    # If the dev's keychain contains a key, default may be non-echo. Skip the
+    # strict assertion in that case to keep the test portable.
+    configured_non_echo = [e for e in data["engines"] if e["name"] != "echo" and e["ready"]]
+    if not configured_non_echo:
+        assert data["default"] == "echo"
 
 
 def test_translate_text_echo_basic():
