@@ -1,22 +1,8 @@
-__pycache__/
-*.py[cod]
-*$py.class
-*.egg-info/
-.venv/
-venv/
-.env
-.env.local
-dist/
-build/
-.pytest_cache/
-.ruff_cache/
-.coverage
-htmlcov/
 .DS_Store
 *.swp
 .idea/
 .vscode/
-# Output / samples
-out/
-examples/*.pdf
-!examples/.gitkeep
+
+# Legacy Python venv from earlier prototyping
+.venv/
+__pycache__/

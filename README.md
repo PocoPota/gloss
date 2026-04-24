@@ -59,43 +59,23 @@ npx serve
 | Gemini | <https://aistudio.google.com/app/apikey> |
 | DeepL  | <https://www.deepl.com/account/summary> |
 
-## デプロイ (無料)
+## デプロイ (GitHub Pages)
 
-静的ファイルだけなので、ほぼ何でも載ります。推奨:
+同梱の GitHub Actions ワークフロー (`.github/workflows/pages.yml`) でリポジトリのルートをそのまま公開します。
 
-### Cloudflare Pages
+### 手順
 
-1. リポジトリを GitHub にプッシュ
-2. Cloudflare Dashboard → Pages → **Connect to Git**
-3. Build settings:
-   - **Build command**: (空欄)
-   - **Build output directory**: `/` (root)
-4. Deploy
+1. GitHub にリポジトリを作成して push
+2. リポジトリの **Settings → Pages** を開く
+3. **Source** を "**GitHub Actions**" に設定
+4. `main` に push すると自動デプロイ — `https://<user>.github.io/<repo>/` で公開
 
-`_headers` ファイルが自動で読まれ、CSP 等のセキュリティヘッダが適用されます。
+### 備考
 
-### Vercel
-
-```bash
-npx vercel
-```
-
-(付属の `vercel.json` で CSP ヘッダが自動設定されます)
-
-### Netlify
-
-リポジトリ直結、または:
-
-```bash
-npx netlify deploy --prod --dir=.
-```
-
-`_headers` が自動で読まれます。
-
-### その他
-
-- GitHub Pages: `.github/workflows/pages.yml` でルートをそのまま publish (CSP は `<meta>` で代替)
-- 静的ファイルサーバならどこでも動きます
+- ビルド不要。ワークフローはリポジトリをそのまま静的サイトとして発行します
+- `.nojekyll` が入っているので Jekyll による変換は行われません
+- GitHub Pages は HTTP 応答ヘッダをカスタムできないため、CSP は `index.html` の `<meta http-equiv="Content-Security-Policy">` で適用されます
+- 他のホスティング (Cloudflare Pages / Vercel / Netlify) にも静的ファイルをそのまま置けば動きます
 
 ## セキュリティ方針
 
@@ -110,13 +90,13 @@ npx netlify deploy --prod --dir=.
 
 ```
 gloss/
-├── index.html      # 単一のHTMLエントリ
+├── index.html                      # 単一のHTMLエントリ (CSP meta含む)
 ├── style.css
-├── app.js          # PDF描画、選択検出、キー管理、UIロジック
-├── translate.js    # Claude / Gemini / DeepL / echo のブラウザ直叩き実装
-├── protect.js      # 引用・URL・図表番号を ⟦N⟧ 化→復元
-├── _headers        # Cloudflare Pages / Netlify のCSP
-└── vercel.json     # Vercel 用CSP
+├── app.js                          # PDF描画、選択検出、キー管理、UI
+├── translate.js                    # Claude / Gemini / DeepL / echo の直叩き実装
+├── protect.js                      # 引用・URL・図表番号を ⟦N⟧ 化→復元
+├── .nojekyll                       # GitHub Pages が Jekyll 処理を行わないように
+└── .github/workflows/pages.yml     # ルートを Pages に publish
 ```
 
 ## ライセンス
