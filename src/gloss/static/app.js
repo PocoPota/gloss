@@ -1,0 +1,403 @@
+// pdf-translater frontend: PDF.js viewer + on-selection translation.
+
+import * as pdfjsLib from "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.min.mjs";
+
+pdfjsLib.GlobalWorkerOptions.workerSrc =
+  "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.worker.min.mjs";
+
+// ---------- DOM ----------
+const $ = (id) => document.getElementById(id);
+const fileInput = $("file");
+const engineSel = $("engine");
+const zoomSel = $("zoom");
+const pagesEl = $("pages");
+const viewerEl = $("viewer");
+const dropHint = $("drop-hint");
+const docMeta = $("doc-meta");
+const currentEl = $("current");
+const historyEl = $("history");
+const cacheStat = $("cache-stat");
+const clearHistoryBtn = $("clear-history");
+
+// ---------- State ----------
+let currentPdf = null;            // pdfjs document proxy
+let currentDocName = "";
+let currentEngine = "echo";
+let selectionSeq = 0;             // monotonic id for inflight selection translations
+let currentAborter = null;        // AbortController for the currently-active fetch
+let currentLoadingEntry = null;   // <li> of the in-progress history card
+const translationCache = new Map(); // key = `${engine}\0${text}` → translated
+
+// ---------- Cache persistence ----------
+const CACHE_KEY = "pdft:cache:v1";
+const CACHE_MAX = 500;
+
+function loadCache() {
+  try {
+    const raw = localStorage.getItem(CACHE_KEY);
+    if (!raw) return;
+    const obj = JSON.parse(raw);
+    for (const [k, v] of Object.entries(obj)) translationCache.set(k, v);
+  } catch (e) {
+    console.warn("cache load failed", e);
+  }
+  updateCacheStat();
+}
+
+function saveCache() {
+  // Trim to CACHE_MAX most recent entries (insertion order).
+  const entries = Array.from(translationCache.entries());
+  const trimmed = entries.slice(-CACHE_MAX);
+  const obj = Object.fromEntries(trimmed);
+  try {
+    localStorage.setItem(CACHE_KEY, JSON.stringify(obj));
+  } catch (e) {
+    console.warn("cache save failed", e);
+  }
+}
+
+function cacheKey(engine, text) { return `${engine}\0${text}`; }
+
+function updateCacheStat() {
+  cacheStat.textContent = `キャッシュ ${translationCache.size}件`;
+}
+
+// ---------- Engines ----------
+async function loadEngines() {
+  try {
+    const res = await fetch("/api/engines");
+    const data = await res.json();
+    engineSel.innerHTML = "";
+    for (const e of data.engines) {
+      const opt = document.createElement("option");
+      opt.value = e.name;
+      opt.textContent = e.ready ? e.name : `${e.name} (未設定: ${e.reason})`;
+      opt.disabled = !e.ready && e.name !== "echo";
+      if (e.name === data.default) opt.selected = true;
+      engineSel.appendChild(opt);
+    }
+    currentEngine = engineSel.value;
+  } catch (err) {
+    console.error(err);
+  }
+}
+
+engineSel.addEventListener("change", () => {
+  currentEngine = engineSel.value;
+});
+
+// ---------- File input / drop ----------
+fileInput.addEventListener("change", (ev) => {
+  const f = ev.target.files?.[0];
+  if (f) openPdf(f);
+});
+
+// Highlight the whole viewer on dragover (works with or without drop-hint visible).
+viewerEl.addEventListener("dragover", (ev) => {
+  ev.preventDefault();
+  viewerEl.classList.add("dragover");
+});
+viewerEl.addEventListener("dragleave", (ev) => {
+  // dragleave fires on child elements too — only clear when leaving the viewer itself.
+  if (ev.target === viewerEl) viewerEl.classList.remove("dragover");
+});
+viewerEl.addEventListener("drop", (ev) => {
+  ev.preventDefault();
+  viewerEl.classList.remove("dragover");
+  const f = ev.dataTransfer?.files?.[0];
+  if (f && f.type === "application/pdf") openPdf(f);
+});
+
+async function openPdf(file) {
+  currentDocName = file.name;
+  docMeta.textContent = `${file.name} — 読込中…`;
+  pagesEl.innerHTML = "";
+  dropHint.hidden = true;
+  try {
+    const buf = await file.arrayBuffer();
+    const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+    currentPdf = pdf;
+    docMeta.textContent = `${file.name} — ${pdf.numPages}ページ`;
+    await renderAllPages();
+  } catch (e) {
+    console.error(e);
+    docMeta.textContent = `エラー: ${e.message}`;
+    dropHint.hidden = false;
+  }
+}
+
+async function renderAllPages() {
+  pagesEl.innerHTML = "";
+  const scale = parseFloat(zoomSel.value);
+  for (let i = 1; i <= currentPdf.numPages; i++) {
+    const pageEl = await renderPage(i, scale);
+    pagesEl.appendChild(pageEl);
+  }
+}
+
+zoomSel.addEventListener("change", () => {
+  if (currentPdf) renderAllPages();
+});
+
+async function renderPage(pageNum, scale) {
+  const page = await currentPdf.getPage(pageNum);
+  const viewport = page.getViewport({ scale });
+
+  const container = document.createElement("div");
+  container.className = "page";
+  container.style.width = `${viewport.width}px`;
+  container.style.height = `${viewport.height}px`;
+
+  const canvas = document.createElement("canvas");
+  canvas.width = viewport.width;
+  canvas.height = viewport.height;
+  container.appendChild(canvas);
+
+  const textLayerDiv = document.createElement("div");
+  textLayerDiv.className = "textLayer";
+  textLayerDiv.style.width = `${viewport.width}px`;
+  textLayerDiv.style.height = `${viewport.height}px`;
+  // Required by PDF.js v4 TextLayer — positions are computed relative to this.
+  textLayerDiv.style.setProperty("--scale-factor", String(scale));
+  container.appendChild(textLayerDiv);
+
+  const ctx = canvas.getContext("2d");
+  const renderTask = page.render({ canvasContext: ctx, viewport });
+  const [_render, textContent] = await Promise.all([
+    renderTask.promise,
+    page.getTextContent(),
+  ]);
+
+  // PDF.js v4+: TextLayer class replaces the removed renderTextLayer() helper.
+  const textLayer = new pdfjsLib.TextLayer({
+    textContentSource: textContent,
+    container: textLayerDiv,
+    viewport,
+  });
+  await textLayer.render();
+
+  return container;
+}
+
+// ---------- Selection handler ----------
+//
+// Fire translation only when the user COMMITS the selection — i.e. releases
+// the mouse / lifts the key. `selectionchange` fires continuously while
+// dragging (even when the user pauses to think), which caused premature
+// translations of half-complete selections.
+//
+// We debounce lightly (120ms) to collapse bursts of events (e.g. shift+click
+// that emits both keyup and mouseup).
+let selTimer = null;
+let lastDispatchedText = "";
+
+function scheduleSelectionCheck() {
+  clearTimeout(selTimer);
+  selTimer = setTimeout(handleSelection, 120);
+}
+
+document.addEventListener("mouseup", scheduleSelectionCheck);
+document.addEventListener("keyup", (ev) => {
+  // Only care about keys that can modify a selection.
+  if (ev.shiftKey || ev.key === "Shift" || ev.key.startsWith("Arrow") || ev.key === "Home" || ev.key === "End") {
+    scheduleSelectionCheck();
+  }
+});
+
+// Esc → cancel pending/in-flight translation and clear selection.
+document.addEventListener("keydown", (ev) => {
+  if (ev.key === "Escape") {
+    cancelPending();
+    window.getSelection()?.removeAllRanges();
+  }
+});
+
+function cancelInFlight() {
+  if (currentAborter) {
+    currentAborter.abort();
+    currentAborter = null;
+  }
+  if (currentLoadingEntry) {
+    removeHistoryEntry(currentLoadingEntry);
+    currentLoadingEntry = null;
+  }
+  setCurrent("", false);
+}
+
+function cancelPending() {
+  clearTimeout(selTimer);
+  selTimer = null;
+  cancelInFlight();
+  lastDispatchedText = "";
+}
+
+// Only translate selections that started inside a text layer.
+function selectionInsideViewer(sel) {
+  if (!sel.rangeCount) return false;
+  const anchor = sel.anchorNode;
+  const focus = sel.focusNode;
+  const inside = (n) => {
+    for (let el = n; el; el = el.parentNode) {
+      if (el.classList && el.classList.contains("textLayer")) return true;
+    }
+    return false;
+  };
+  return inside(anchor) && inside(focus);
+}
+
+async function handleSelection() {
+  const sel = window.getSelection();
+  if (!sel || sel.isCollapsed) return;
+  if (!selectionInsideViewer(sel)) return;
+  const text = sel.toString().trim();
+  if (text.length < 2) return;
+  // Skip if this exact text was just dispatched (e.g. mouseup after a keyup on same range).
+  if (text === lastDispatchedText) return;
+  lastDispatchedText = text;
+
+  const myId = ++selectionSeq;
+  const engine = currentEngine;
+  await translateAndRecord(text, engine, myId);
+}
+
+async function translateAndRecord(text, engine, id) {
+  // A newer selection arrives — cancel anything currently in flight.
+  cancelInFlight();
+
+  const key = cacheKey(engine, text);
+  setCurrent(`翻訳中: ${truncate(text, 80)}  (Escで解除)`, true);
+
+  // Cache hit: instant.
+  if (translationCache.has(key)) {
+    const tr = translationCache.get(key);
+    if (id !== selectionSeq) return;
+    pushHistory({ text, translated: tr, engine, cached: true });
+    setCurrent("", false);
+    return;
+  }
+
+  // Provisional history entry (loading state).
+  const entry = pushHistory({ text, translated: "", engine, loading: true });
+  currentLoadingEntry = entry;
+  const aborter = new AbortController();
+  currentAborter = aborter;
+
+  try {
+    const res = await fetch("/api/translate-text", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ text, engine }),
+      signal: aborter.signal,
+    });
+    if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
+    const data = await res.json();
+    if (id !== selectionSeq) {
+      // A newer selection superseded this one — still cache the result.
+      translationCache.set(key, data.translated);
+      updateCacheStat();
+      saveCache();
+      removeHistoryEntry(entry);
+      return;
+    }
+    updateHistoryEntry(entry, {
+      translated: data.translated,
+      loading: false,
+      elapsedMs: data.elapsed_ms,
+    });
+    translationCache.set(key, data.translated);
+    updateCacheStat();
+    saveCache();
+  } catch (err) {
+    if (err.name === "AbortError") {
+      // User pressed Esc or a newer selection aborted us — card already removed.
+      return;
+    }
+    updateHistoryEntry(entry, {
+      translated: `翻訳エラー: ${err.message}`,
+      loading: false,
+      error: true,
+    });
+  } finally {
+    if (currentAborter === aborter) {
+      currentAborter = null;
+      currentLoadingEntry = null;
+    }
+    if (id === selectionSeq) setCurrent("", false);
+  }
+}
+
+// ---------- UI helpers ----------
+function setCurrent(msg, active) {
+  currentEl.textContent = msg;
+  currentEl.classList.toggle("active", !!active);
+}
+
+function truncate(s, n) {
+  return s.length > n ? s.slice(0, n) + "…" : s;
+}
+
+function pushHistory({ text, translated, engine, cached = false, loading = false, error = false, elapsedMs }) {
+  const li = document.createElement("li");
+  if (loading) li.classList.add("loading");
+  li.dataset.text = text;
+  li.dataset.engine = engine;
+
+  const head = document.createElement("div");
+  head.className = "head";
+  const timeEl = document.createElement("span");
+  timeEl.className = "time";
+  timeEl.textContent = new Date().toLocaleTimeString();
+  const badge = document.createElement("span");
+  badge.className = "badge" + (cached ? " cache" : "") + (error ? " err" : "");
+  badge.textContent = error ? "ERR" : cached ? `cache · ${engine}` : engine + (elapsedMs != null ? ` · ${elapsedMs}ms` : "");
+  head.appendChild(timeEl);
+  head.appendChild(badge);
+
+  const src = document.createElement("div");
+  src.className = "src";
+  src.textContent = text;
+  src.title = "クリックで全文表示";
+  src.addEventListener("click", () => src.classList.toggle("expanded"));
+
+  const tr = document.createElement("div");
+  tr.className = "tr";
+  tr.textContent = translated;
+
+  li.appendChild(head);
+  li.appendChild(src);
+  li.appendChild(tr);
+
+  historyEl.prepend(li);
+  return li;
+}
+
+function updateHistoryEntry(li, { translated, loading, error, elapsedMs }) {
+  if (!li) return;
+  const tr = li.querySelector(".tr");
+  const badge = li.querySelector(".badge");
+  if (translated != null) tr.textContent = translated;
+  li.classList.toggle("loading", !!loading);
+  if (error) badge.classList.add("err");
+  if (elapsedMs != null && !error) {
+    badge.textContent = `${li.dataset.engine} · ${elapsedMs}ms`;
+  }
+  if (error) badge.textContent = "ERR";
+}
+
+function removeHistoryEntry(li) {
+  if (li && li.parentNode) li.parentNode.removeChild(li);
+}
+
+// ---------- Clear history ----------
+clearHistoryBtn.addEventListener("click", () => {
+  if (!confirm("履歴とキャッシュをクリアします。よろしいですか？")) return;
+  historyEl.innerHTML = "";
+  translationCache.clear();
+  localStorage.removeItem(CACHE_KEY);
+  updateCacheStat();
+  setCurrent("", false);
+});
+
+// ---------- Init ----------
+loadCache();
+loadEngines();
